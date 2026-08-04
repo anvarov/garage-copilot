@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/anvarov/garage-copilot#readme",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "express": "^5.2.1",
     "pg": "^8.22.0"
   },
