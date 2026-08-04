@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch  --env-file=.env src/index.ts"
   },
   "repository": {
     "type": "git",
@@ -20,11 +20,13 @@
   },
   "homepage": "https://github.com/anvarov/garage-copilot#readme",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.3",
     "tsx": "^4.23.5",
     "typescript": "^7.0.2"
   }
