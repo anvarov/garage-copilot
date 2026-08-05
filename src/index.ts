@@ -1,6 +1,7 @@
 import express from "express";
 import { pool } from "./db.js"
 import { anthropic } from "./llm.js";
+import { parsePort } from "./config.js";
 
 const app = express();
 
@@ -46,7 +47,7 @@ app.post("/chat", async (req, res) => {
     }
 })
 
-const port = Number(process.env.PORT ?? 3000);
+const port = parsePort(process.env.PORT);
 app.listen(port, () => {
 
     console.log(`listening on http://localhost:${port}`)

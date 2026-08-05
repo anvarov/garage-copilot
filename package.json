@@ -4,8 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "tsx watch  --env-file=.env src/index.ts"
+    "test": "vitest run",
+    "dev": "tsx watch  --env-file=.env src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
@@ -29,6 +30,7 @@
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.3",
     "tsx": "^4.23.5",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
