@@ -2,7 +2,6 @@ import express from "express";
 import { pool } from "./db.js"
 import { anthropic } from "./llm.js";
 import { parsePort } from "./config.js";
-import { text } from "node:stream/consumers";
 
 const app = express();
 

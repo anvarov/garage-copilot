@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
-    "dev": "tsx watch  --env-file=.env src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "migrate": "tsx --env-file=.env src/migrate.ts",
     "typecheck": "tsc --noEmit"
   },
   "repository": {
@@ -23,6 +24,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "express": "^5.2.1",
+    "openai": "^7.4.0",
     "pg": "^8.22.0"
   },
   "devDependencies": {
