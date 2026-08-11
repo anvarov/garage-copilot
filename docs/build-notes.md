@@ -18,8 +18,9 @@ Running record of what's built, what's next, and why things were decided the way
 **Week 2 (Aug 10–16) — in progress**
 
 - [x] Schema and migration runner — `documents`, `chunks`, `schema_migrations`
-- [ ] First corpus document: a first-party repair write-up in `corpus/`
-- [ ] Ingestion: read file → chunk → insert rows
+- [x] `chunkText()` with overlap, plus unit tests
+- [ ] `ingestFile()` — read → chunk → insert `documents` + `chunks` in a transaction
+- [ ] Real corpus: Stack Exchange (CC BY-SA, attributed) + first-party repair notes
 - [ ] Embeddings: OpenAI → store in `chunks.embedding`
 - [ ] Retrieval: embed the question, find nearest chunks
 - [ ] Citations: return source alongside the answer
@@ -82,12 +83,21 @@ curl -N -X POST localhost:3000/chat \
 
 **A parser reports where it gave up, not where you went wrong.** `syntax error at or near "("` was caused by a missing comma on the *previous* line. When a syntax error points at a token that looks fine, read backwards one line.
 
+**A guard placed after the action it prevents does nothing.** The first version of the chunker's `break` ran after the `push`, so the redundant trailing chunk was still created. Reads fine top to bottom; does nothing.
+
+**`slice(start, end)` takes an end index, not a length.** Cost an hour in `chunkText`.
+
+**Chunk overlap exists so facts survive the cut.** Without it a boundary can land mid-fact — "…pinch bolt" in one chunk, "45 N·m" in the next — and neither chunk matches a question about pinch bolt torque. The fact is in the corpus and unretrievable. Cost is ~15% more chunks.
+
+**Corpus content must be real or clearly labelled synthetic, never a blend.** A document mixing verified specs into generated prose looks trustworthy and isn't. Synthetic test text lives in `test/fixtures/` with placeholder values, never in `corpus/`.
+
 **Read stack traces for your own frames.** `node_modules` lines say where an error surfaced; the last line naming your file says where it originated. Wrap errors with context as they propagate (`migration ${file} failed: ...`) so the next one diagnoses itself.
 
 ---
 
 ## Next session
 
-1. `npm run migrate`, confirm three tables with `\dt`
-2. Write `src/ingest.ts` — read a markdown file, split into overlapping chunks, insert `documents` + `chunks` rows. No embeddings yet.
-3. Write the first corpus document: one of your own repair write-ups, in `corpus/`.
+1. `ingestFile(path, metadata)` in `src/ingest.ts` — read the file, `chunkText` it, then in a transaction: insert one `documents` row with `RETURNING id`, then one `chunks` row per chunk with its `ordinal`.
+2. CLI entry so `npm run ingest -- test/fixtures/synthetic-fuca-replacement.md` works.
+3. Verify: `SELECT count(*) FROM chunks;` and read a few rows to check boundaries.
+4. Then embeddings — OpenAI `text-embedding-3-small`, written into `chunks.embedding`.
