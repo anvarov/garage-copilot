@@ -7,7 +7,8 @@
     "test": "vitest run",
     "dev": "tsx watch --env-file=.env src/index.ts",
     "migrate": "tsx --env-file=.env src/migrate.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ingest": "tsx --env-file=.env src/cli/ingest.ts"
   },
   "repository": {
     "type": "git",
