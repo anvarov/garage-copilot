@@ -19,11 +19,32 @@ Running record of what's built, what's next, and why things were decided the way
 
 - [x] Schema and migration runner — `documents`, `chunks`, `schema_migrations`
 - [x] `chunkText()` with overlap, plus unit tests
-- [ ] `ingestFile()` — read → chunk → insert `documents` + `chunks` in a transaction
+- [x] `ingestFile()` — read → chunk → embed → insert `documents` + `chunks` in one transaction. CLI at `src/cli/ingest.ts`
+- [x] Embeddings: OpenAI `text-embedding-3-small` → `chunks.embedding`, verified with a nearest-neighbour query in psql
+- [x] Retrieval: `retrieve()` embeds the question, joins chunks to documents, returns ranked passages with metadata
+- [x] Citations: `/chat` builds numbered passages, streams the answer with inline `[n]` citations, sends an `event: sources` frame before generation
+- [x] Refusal behaviour verified — an out-of-corpus question ("oil change on a Honda Civic") is declined rather than answered from training knowledge
+
+**Week 2 complete.** Full RAG pipeline: file → chunks → embeddings → pgvector → retrieval → grounded answer with citations.
 - [ ] Real corpus: Stack Exchange (CC BY-SA, attributed) + first-party repair notes
-- [ ] Embeddings: OpenAI → store in `chunks.embedding`
-- [ ] Retrieval: embed the question, find nearest chunks
-- [ ] Citations: return source alongside the answer
+
+---
+
+## Known limitations
+
+**Chunking splits mid-word.** Fixed-size character windows cut through words and sentences — chunk 3 of the fixture begins `"d on many suspension components"`. Retrieval survives it thanks to the overlap, but the chunks read badly, and they will read badly in citations shown to users. Next iteration: split on paragraph or sentence boundaries first, then pack up to the size limit.
+
+**Frontmatter is embedded as content.** The fixture's `---` header ends up inside chunk 0 and gets embedded as if it were repair text. Real corpus files will have YAML frontmatter too, so stripping it is a genuine ingestion step rather than a fixture quirk.
+
+**Re-ingesting a file creates a duplicate document row.** No natural key, no upsert. Every re-run doubles the data and pays for embeddings again. Needs a source identifier plus either delete-then-insert or `ON CONFLICT`.
+
+**No vector index.** A sequential scan over 7 rows is free; over thousands it won't be. HNSW once there's enough data to make tuning meaningful.
+
+**Sources are sent before the model decides whether it can answer.** Sending the `event: sources` frame immediately after `flushHeaders()` buys a faster first paint, but it commits to those sources before knowing they're usable. On an out-of-corpus question the client receives five irrelevant citations alongside "I can't answer this." Fix: check the best distance before streaming and send an empty list if nothing clears a threshold. Observed distances on good matches were 0.45–0.63, so a cutoff around 0.7 is a reasonable starting point.
+
+**Sources aren't deduplicated by document.** Five chunks from one document produce five entries with the same title. The UI should group by document.
+
+**Provenance should reach the model deliberately, not accidentally.** The fixture's frontmatter happened to land in chunk 0, and the model correctly used it to caveat its answer — but only by luck of chunking. Better: strip frontmatter from content and put `source_type` and `license` into the passage header the prompt builds, so every passage carries its own trust level regardless of where the chunk boundaries fell.
 
 ---
 
@@ -97,7 +118,31 @@ curl -N -X POST localhost:3000/chat \
 
 ## Next session
 
-1. `ingestFile(path, metadata)` in `src/ingest.ts` — read the file, `chunkText` it, then in a transaction: insert one `documents` row with `RETURNING id`, then one `chunks` row per chunk with its `ordinal`.
-2. CLI entry so `npm run ingest -- test/fixtures/synthetic-fuca-replacement.md` works.
-3. Verify: `SELECT count(*) FROM chunks;` and read a few rows to check boundaries.
-4. Then embeddings — OpenAI `text-embedding-3-small`, written into `chunks.embedding`.
+**Retrieval — the step where this becomes a search engine.**
+
+1. `src/retrieve.ts` — take a question string, `embed()` it, then one query:
+
+```sql
+SELECT c.content, c.ordinal, d.title, d.author, d.source_url,
+       c.embedding <=> $1 AS distance
+FROM chunks c
+JOIN documents d ON d.id = c.document_id
+ORDER BY distance
+LIMIT 5;
+```
+
+The join is what turns a retrieved chunk into a citation.
+
+2. Wire it into `/chat`: embed the question, retrieve, build a prompt containing those chunks, send to Claude, stream back the answer plus the sources.
+
+3. Test with a question the corpus can actually answer — something about ball joint play or torquing at ride height — and check the retrieved chunks are the ones you'd have picked by hand.
+
+Useful diagnostic while developing:
+
+```sql
+-- nearest neighbours to a given chunk, no API call needed
+SELECT ordinal,
+       round((embedding <=> (SELECT embedding FROM chunks WHERE ordinal = 0))::numeric, 4) AS distance,
+       left(content, 60)
+FROM chunks ORDER BY distance;
+```

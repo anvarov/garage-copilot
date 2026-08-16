@@ -8,7 +8,8 @@
     "dev": "tsx watch --env-file=.env src/index.ts",
     "migrate": "tsx --env-file=.env src/migrate.ts",
     "typecheck": "tsc --noEmit",
-    "ingest": "tsx --env-file=.env src/cli/ingest.ts"
+    "ingest": "tsx --env-file=.env src/cli/ingest.ts",
+    "db": "docker compose exec db psql -U garage -d garage"
   },
   "repository": {
     "type": "git",
