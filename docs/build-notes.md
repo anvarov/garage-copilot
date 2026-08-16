@@ -21,8 +21,11 @@ Running record of what's built, what's next, and why things were decided the way
 - [x] `chunkText()` with overlap, plus unit tests
 - [x] `ingestFile()` — read → chunk → embed → insert `documents` + `chunks` in one transaction. CLI at `src/cli/ingest.ts`
 - [x] Embeddings: OpenAI `text-embedding-3-small` → `chunks.embedding`, verified with a nearest-neighbour query in psql
-- [ ] Retrieval: embed the question, find nearest chunks
-- [ ] Citations: return source alongside the answer
+- [x] Retrieval: `retrieve()` embeds the question, joins chunks to documents, returns ranked passages with metadata
+- [x] Citations: `/chat` builds numbered passages, streams the answer with inline `[n]` citations, sends an `event: sources` frame before generation
+- [x] Refusal behaviour verified — an out-of-corpus question ("oil change on a Honda Civic") is declined rather than answered from training knowledge
+
+**Week 2 complete.** Full RAG pipeline: file → chunks → embeddings → pgvector → retrieval → grounded answer with citations.
 - [ ] Real corpus: Stack Exchange (CC BY-SA, attributed) + first-party repair notes
 
 ---
@@ -36,6 +39,12 @@ Running record of what's built, what's next, and why things were decided the way
 **Re-ingesting a file creates a duplicate document row.** No natural key, no upsert. Every re-run doubles the data and pays for embeddings again. Needs a source identifier plus either delete-then-insert or `ON CONFLICT`.
 
 **No vector index.** A sequential scan over 7 rows is free; over thousands it won't be. HNSW once there's enough data to make tuning meaningful.
+
+**Sources are sent before the model decides whether it can answer.** Sending the `event: sources` frame immediately after `flushHeaders()` buys a faster first paint, but it commits to those sources before knowing they're usable. On an out-of-corpus question the client receives five irrelevant citations alongside "I can't answer this." Fix: check the best distance before streaming and send an empty list if nothing clears a threshold. Observed distances on good matches were 0.45–0.63, so a cutoff around 0.7 is a reasonable starting point.
+
+**Sources aren't deduplicated by document.** Five chunks from one document produce five entries with the same title. The UI should group by document.
+
+**Provenance should reach the model deliberately, not accidentally.** The fixture's frontmatter happened to land in chunk 0, and the model correctly used it to caveat its answer — but only by luck of chunking. Better: strip frontmatter from content and put `source_type` and `license` into the passage header the prompt builds, so every passage carries its own trust level regardless of where the chunk boundaries fell.
 
 ---
 
