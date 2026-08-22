@@ -84,6 +84,8 @@ curl -N -X POST localhost:3000/chat \
 
 **Plain SQL migrations over an ORM or migration library.** Fewer moving parts, and writing the runner means understanding what those tools do — a `schema_migrations` table and a transaction per file.
 
+**A failed stream discards the partial answer.** When `streamChat` throws mid-stream, `finally` runs `setStreaming("")` and `setMessages` is never reached, so text already on screen disappears and is replaced by the error. This is deliberate, not an oversight. The app answers questions about vehicle repair, and half a procedure is more dangerous than no procedure — it looks complete enough to act on. The alternative (keep the partial text, flag it as incomplete) is defensible for a general chat app and wrong for this one. Note the asymmetry inside that `finally`: clearing `isStreaming` on both paths is what stops a failed request locking the input forever; clearing `streaming` on both paths is what discards the partial answer. Same block, two different reasons.
+
 **Corpus is licensing-constrained.** No scraping of Tesla forums, Reddit, or TMC — other people's copyrighted writing, under terms that forbid it. Using NHTSA (public domain, via live tool-calling), Motor Vehicle Maintenance & Repair Stack Exchange (Creative Commons, attributed), and first-party repair notes. The `author` and `license` columns exist so this can't be quietly skipped.
 
 ---
