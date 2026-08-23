@@ -6,6 +6,8 @@
 //
 //   GET https://api.nhtsa.gov/recalls/recallsByVehicle?make=..&model=..&modelYear=..
 
+import type Anthropic from "@anthropic-ai/sdk";
+
 const ENDPOINT = "https://api.nhtsa.gov/recalls/recallsByVehicle";
 
 /** How many recalls to hand back. A 2023 Model 3 has 12; some vehicles have far
@@ -61,6 +63,15 @@ export type RecallLookup = {
  *     first: "31/01/2020" would sort after "05/08/2026". Silently wrong. */
 function toIso(ddmmyyyy: string): string {
     const [day, month, year] = ddmmyyyy.split("/");
+
+    // `noUncheckedIndexedAccess` is on, so destructuring gives string | undefined
+    // — TypeScript cannot know split() produced three parts, and it is right not
+    // to assume. If NHTSA ever changes format, this throws loudly instead of
+    // building a mangled date that then feeds the sort.
+    if (!day || !month || !year) {
+        throw new Error(`unexpected NHTSA date format: "${ddmmyyyy}"`);
+    }
+
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
@@ -138,3 +149,29 @@ if (import.meta.filename === process.argv[1]) {
         console.log(`${r.reportedDate}  ${r.campaignNumber}  ${r.component}  ${flags}`);
     }
 }
+export const tools: Anthropic.Tool[] = [
+    { name: "NHTSA_call",
+        description: "It should be used when user asks for open recalls, safety notices or wether their vehicle has known defects\
+        based on the vehicle information get the latest recall information on vehicle",
+        input_schema: {
+            type: "object",
+            properties: {
+                "year": {
+                    "type": "string",
+                    "description": "Vehicle year, examples: 2023, 2021, 2001"
+                },
+                "make": {
+                    "type": "string",
+                    "description": "Vehicle make, examples tesla, Tesla, BMW, bmw"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Vehicle model, model 3, Model 3, MODEL 3"
+                }
+            },
+            required: ["year", "make", "model"],
+            additionalProperties: false,
+        },
+        strict: true,
+    }
+]

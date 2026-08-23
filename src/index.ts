@@ -3,6 +3,11 @@ import { pool } from "./db.js";
 import { anthropic } from "./llm.js";
 import { parsePort } from "./config.js";
 import { retrieve } from "./retrieve.js";
+import { getRecalls, tools, type RecallLookup } from "./tools/nhtsa.js";
+import Anthropic from "@anthropic-ai/sdk";
+import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream.mjs";
+
+const MAX_TURNS = 2
 
 const app = express();
 
@@ -13,13 +18,34 @@ app.use(express.json());
 // standing rules rather than context for one turn.
 const SYSTEM_PROMPT = `You are a repair assistant for people who work on their own vehicles.
 
-Answer using ONLY the passages provided in the user's message. Do not answer
-from general knowledge, even if you are confident.
+You have exactly two sources of fact. Never answer from general knowledge, even
+if you are confident.
 
-If the passages do not contain the answer, say so plainly and stop. Do not
+1. The passages provided in the user's message. Cite these inline by number,
+   like [1] or [2], for every claim drawn from them.
+2. Recall data returned by the NHTSA_call tool. Cite these by campaign number,
+   like 25V092000.
+
+If neither source contains the answer, say so plainly and stop. Do not
 speculate.
 
-Cite the passage number inline, like [1] or [2], for every claim you make.
+RECALL LOOKUPS
+
+A lookup that returns no recalls means the vehicle has none on record. A lookup
+that FAILS means you do not know. These are completely different and must never
+be reported the same way. If the tool returns an error, say the lookup failed
+and that the user should check nhtsa.gov directly. Never say or imply that a
+vehicle has no open recalls unless a lookup actually succeeded and came back
+empty.
+
+If the result reports more recalls than it lists, say the list is partial.
+
+Report the severity flags before anything else, in plain language:
+parkIt means stop driving the vehicle. parkOutside means do not park it indoors
+or near a structure, because of fire risk. otaUpdate means the fix ships as a
+software update and may already be installed.
+
+SAFETY
 
 This is vehicle repair and mistakes are expensive or dangerous. If a torque
 value, part number, or clearance is not present in the passages, say that it
@@ -86,26 +112,82 @@ app.post("/chat", async (req, res) => {
     // client render the sources panel during that wait.
     res.write(`event: sources\ndata: ${JSON.stringify(sources)}\n\n`);
 
-    const stream = anthropic.messages.stream({
-        model: "claude-sonnet-5",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userMessage }],
-    });
-
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }]
+    let currentStream: MessageStream | null = null
     res.on("close", () => {
-        if (!res.writableEnded) stream.abort();
-    });
+        if (!res.writableEnded) currentStream?.abort();
+    })
+    // The loop has two exits and they mean opposite things: `break` is the model
+    // finishing, running out of turns is us cutting it off mid-thought. Without
+    // this flag both send `event: done` and a truncated answer looks complete —
+    // the same empty-vs-failed distinction as a failed recall lookup, one level up.
+    let finished = false;
 
     try {
-        for await (const event of stream) {
-            if (
-                event.type === "content_block_delta" &&
-                event.delta.type === "text_delta"
-            ) {
-                res.write(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`);
+        for (let turn = 0; turn < MAX_TURNS; turn++) {
+            const stream = anthropic.messages.stream({
+                model: "claude-sonnet-5",
+                max_tokens: 1024,
+                system: SYSTEM_PROMPT,
+                tools: [...tools],
+                tool_choice: { type: "auto", disable_parallel_tool_use: true },
+                messages
+            });
+            currentStream = stream
+            for await (const event of stream) {
+                if (
+                    event.type === "content_block_delta" &&
+                    event.delta.type === "text_delta"
+                ) {
+                    res.write(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`);
+                }
             }
+            const final = await stream.finalMessage()
+            if (final.stop_reason !== "tool_use") {
+                finished = true;
+                break;
+            }
+
+            const toolUse = final.content.find(
+                (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
+            )
+            if (toolUse === undefined) throw new Error("stop_reason was tool_use but no tool_use block was present")
+            const { make, model, year } = toolUse.input as { make: string, model: string, year: string }
+            let toolResult: string
+            let isError = false
+            try {
+                const result = await getRecalls(make, model, year)
+                toolResult = JSON.stringify(result)
+
+            } catch (err) {
+                console.error("NHTSA lookup failed:", err)
+                isError = true
+                // Reports what happened; it does not instruct. The system prompt
+                // is where the "say so explicitly" rule lives. And it must not be
+                // readable as an empty result — "no recalls" and "could not check"
+                // are different claims, and only one of them is safe to guess at.
+                toolResult =
+                    `The recall lookup FAILED and returned no data: ${(err as Error).message}. ` +
+                    `This is not a result. It is unknown whether this vehicle has open recalls.`
+            }
+            messages.push({ role: "assistant", content: final.content })
+            messages.push({
+                role: "user", content: [
+                    { type: "tool_result", tool_use_id: toolUse.id, content: toolResult, is_error: isError }
+                ]
+            })
         }
+        if (!finished) {
+            // Ran out of turns with the model still asking for tools. Whatever
+            // streamed is a fragment, so say so rather than closing as if done.
+            console.error(`hit MAX_TURNS (${MAX_TURNS}) with the model still requesting tools`);
+            res.write(
+                `event: error\ndata: ${JSON.stringify({
+                    error: "The answer was cut off before it finished. Please ask again.",
+                })}\n\n`
+            );
+        }
+
         res.write("event: done\ndata: {}\n\n");
     } catch (err) {
         console.error("stream failed:", err);
@@ -115,6 +197,7 @@ app.post("/chat", async (req, res) => {
     } finally {
         res.end();
     }
+
 });
 
 const port = parsePort(process.env.PORT);
