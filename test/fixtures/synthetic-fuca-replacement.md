@@ -4,6 +4,7 @@ Generated text for exercising the ingestion pipeline (chunking, boundaries,
 row counts). Every specification below is a placeholder, not a real value.
 Do not ingest into `corpus/`. Do not follow.
 source_type: synthetic_fixture
+title: Front Upper Control Arm Replacement — 2023 Model 3 RWD
 ---
 
 # Front Upper Control Arm Replacement — 2023 Model 3 RWD
