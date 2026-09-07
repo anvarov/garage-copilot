@@ -4,6 +4,36 @@ Running record of what's built, what's next, and why things were decided the way
 
 ---
 
+## What this is for
+
+**The information is already public. The problem is that nobody can search for a procedure name they don't know.**
+
+Tesla publishes its service manuals free and without a login. But an owner types *"clunking over bumps"* and the manual is indexed under *"Front Upper Control Arm Replacement."* The gap is not access — it is the mapping from **how a problem feels** to **what the procedure is called**.
+
+That gap is why semantic retrieval is the right tool rather than keyword search, and it showed up by accident on Aug 16: the question said "clunking", the top-ranked chunk said "knock", no shared keyword, correct match.
+
+### Diagnose, then instruct — and never confuse the two
+
+The app has two jobs and they need different sources:
+
+| kind | job | sources |
+|---|---|---|
+| **symptom language** | *diagnosis* — map what the owner said to what is likely wrong | NHTSA complaints, Stack Exchange questions |
+| **procedure** | *instruction* — what to actually do, once the fault is identified | OEM service manual, first-party notes |
+
+A complaint is **evidence** about what is probably broken. A manual section is **authority** on how to fix it. Collapsing the two produces an owner's guess presented as a repair instruction, which is the failure mode that matters most here.
+
+This is why `source_type` reaches the model in the passage header, not just the title — the model must be able to tell a described noise from a manufacturer procedure, because those license completely different sentences in the answer:
+
+```
+[1] OEM SERVICE MANUAL — "Front Upper Control Arm Replacement":
+[2] OWNER COMPLAINT (NHTSA) — "2023 Model 3, clunking over bumps":
+```
+
+And it constrains the corpus: not just volume, but **both kinds covering the same components**. A complaint about clunking is only useful if there is a control-arm procedure for it to point at.
+
+---
+
 ## Status
 
 **Week 1 (Aug 3–9) — complete, a day early**
@@ -84,7 +114,29 @@ curl -N -X POST localhost:3000/chat \
 
 **Plain SQL migrations over an ORM or migration library.** Fewer moving parts, and writing the runner means understanding what those tools do — a `schema_migrations` table and a transaction per file.
 
-**Corpus is licensing-constrained.** No scraping of Tesla forums, Reddit, or TMC — other people's copyrighted writing, under terms that forbid it. Using NHTSA (public domain, via live tool-calling), Motor Vehicle Maintenance & Repair Stack Exchange (Creative Commons, attributed), and first-party repair notes. The `author` and `license` columns exist so this can't be quietly skipped.
+**"No recalls" and "could not check" must never collapse into each other.** A lookup returning `{count: 0, recalls: []}` means the vehicle has none on record. A lookup that throws means nothing is known. Three separate mechanisms keep them apart: the tool result carries `is_error: true`, the message says "The recall lookup FAILED... This is not a result" rather than being empty, and `SYSTEM_PROMPT` names the distinction directly. Verified by breaking `ENDPOINT` — the model answered "I genuinely don't know... this is different from 'no recalls found'" without being asked to make the distinction in that answer. The same principle drives `count` being the true total before capping, so a truncated list cannot pass as complete.
+
+**A failed tool is not a failed request.** `getRecalls` is wrapped in its own try/catch inside the turn loop, and both `messages.push` calls run on either path. Skipping them on failure would leave a `tool_use` block with no matching `tool_result`, which the API rejects outright — a failed tool still owes the model a reply. This also means a throw from `toIso` on a malformed date degrades into "the lookup failed" instead of killing the response after headers are already sent.
+
+**The tool loop has two exits and they mean opposite things.** `break` is the model finishing; exhausting `MAX_TURNS` is us cutting it off mid-thought. Without the `finished` flag both would send `event: done` and a truncated answer would look complete. `MAX_TURNS = 2` allows exactly one tool call — enough for one vehicle, not enough for "my Model 3 and my wife's CR-V". Raising it is low-risk now that exhaustion is reported rather than silent.
+
+**A failed stream discards the partial answer.** When `streamChat` throws mid-stream, `finally` runs `setStreaming("")` and `setMessages` is never reached, so text already on screen disappears and is replaced by the error. This is deliberate, not an oversight. The app answers questions about vehicle repair, and half a procedure is more dangerous than no procedure — it looks complete enough to act on. The alternative (keep the partial text, flag it as incomplete) is defensible for a general chat app and wrong for this one. Note the asymmetry inside that `finally`: clearing `isStreaming` on both paths is what stops a failed request locking the input forever; clearing `streaming` on both paths is what discards the partial answer. Same block, two different reasons.
+
+**Corpus is licensing-constrained, and every source has a stated position.** *Revised Aug 25 — the original policy excluded OEM manuals on the assumption they were paywalled. They are not.* The `author`, `license` and `source_url` columns exist so none of this can be quietly skipped.
+
+| source | status | how it's handled |
+|---|---|---|
+| NHTSA recalls & complaints | US government work, **public domain** | recalls fetched live via tool-calling; complaints ingested |
+| Motor Vehicle Maintenance & Repair Stack Exchange | **CC BY-SA** | attribution required — store `owner.display_name`, the question link, and the licence string |
+| Tesla service manual (`service.tesla.com`) | **copyrighted, freely published, no login** | small deliberate sample, `source_url` on the exact page, copyright recorded as retained |
+| First-party repair notes | **written here** | facts aren't copyrightable; the expression is ours |
+| Tesla forums, Reddit, TMC | **excluded** | other people's copyrighted writing under terms that forbid it |
+
+On the OEM manuals specifically: publicly reachable is not the same as public domain, and Tesla's service-site terms include a clause against unauthorised downloading. The judgement is that a small attributed sample in a non-commercial demo is a defensible trade — but it *is* a trade, taken deliberately rather than by not looking. The position to state if asked:
+
+> *Three sources with three different licensing situations. NHTSA is public domain. Stack Exchange is CC BY-SA, so the author and link are stored. OEM manual content is copyrighted but freely published, so it's a small sample with attribution and a source link — which is why the schema carries author and licence columns at all.*
+
+**Never** generate plausible-looking specifications. Synthetic test text lives in `test/fixtures/` with every value marked `[PLACEHOLDER]`, and stays out of `corpus/`. Verified working: when a retrieved passage was the synthetic fixture, the model recognised the labelling and refused to quote torque values from it.
 
 ---
 

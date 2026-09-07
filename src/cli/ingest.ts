@@ -8,10 +8,7 @@ if (!path) {
     process.exit(1);
 }
 
-ingestFile(path, {
-  sourceType: "synthetic_fixture",
-  title: "Front Upper Control Arm Replacement — 2023 Model 3 RWD (synthetic)",
-})
+ingestFile(path)
 .then((result) => {
     console.log(`ingested document ${result.documentId}, ${result.chunkCount} chunks`);
 
