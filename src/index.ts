@@ -1,4 +1,6 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
+import path from "node:path";
 import { pool } from "./db.js";
 import { anthropic } from "./llm.js";
 import { parsePort } from "./config.js";
@@ -12,7 +14,7 @@ const MAX_TURNS = 2
 const app = express();
 
 app.use(express.json());
-
+app.set('trust proxy', 1)
 // Static instructions. Kept free of per-request content so it stays identical
 // across calls — that's what prompt caching keys on, and semantically these are
 // standing rules rather than context for one turn.
@@ -52,7 +54,7 @@ value, part number, or clearance is not present in the passages, say that it
 must be verified against the manufacturer's service manual rather than
 guessing.`;
 
-app.get("/health", async (_req, res) => {
+app.get("/api/health", async (_req, res) => {
     try {
         await pool.query("SELECT 1");
         res.json({ ok: true, db: "up" });
@@ -61,8 +63,12 @@ app.get("/health", async (_req, res) => {
         res.status(503).json({ ok: false, db: "down" });
     }
 });
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+})
 
-app.post("/chat", async (req, res) => {
+app.post("/api/chat", limiter, async (req, res) => {
     const { message } = (req.body ?? {}) as { message?: string };
     if (!message) {
         res.status(400).json({ error: "message is required" });
@@ -199,6 +205,8 @@ app.post("/chat", async (req, res) => {
     }
 
 });
+
+app.use(express.static(path.join(process.cwd(), 'web', 'dist')))
 
 const port = parsePort(process.env.PORT);
 app.listen(port, () => {
