@@ -1,15 +1,27 @@
 services:
-  db:
-    image: "pgvector/pgvector:pg17"
+  app:
+    build: .
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: garage
-      POSTGRES_PASSWORD: garage
-      POSTGRES_DB: garage
-
-    ports:
-      - "5432:5432"
+      - DATABASE_URL
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+    expose:
+      - "3000"
     
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+
+    caddy:
+      image: caddy:2-alpine
+      restart: unless-stopped
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile:ro
+        - caddy_data:/data
+        - caddy_config:/config
+      depends_on:
+        - app
 volumes:
-  pgdata:
+  caddy_data:
+  caddy_config:
